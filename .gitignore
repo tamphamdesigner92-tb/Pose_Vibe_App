@@ -1,0 +1,26 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+backend/venv/
+
+# --- macOS ---
+.DS_Store
+
+# --- Editor / IDE ---
+.vscode/
+.idea/
+
+# --- Logs & env files ---
+*.log
+.env
+.env.*
+
+# --- MediaPipe model cache (tự tải lại khi cần) ---
+*.tflite

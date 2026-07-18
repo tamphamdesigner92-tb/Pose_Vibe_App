@@ -1,0 +1,298 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body, html {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: #0a0b0e;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #f5f6f9;
+    -webkit-font-smoothing: antialiased;
+}
+
+.app-container {
+    display: flex;
+    width: 100vw;
+    height: 100vh;
+}
+
+/* ==========================================================================
+   VISUAL PANEL (60% Width) - Camera and Stick Figure Overlay
+   ========================================================================== */
+.visual-panel {
+    width: 60%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background-color: #0a0b0e;
+    border-right: 1px solid #1f222a;
+    position: relative;
+}
+
+.video-wrapper {
+    flex: 1;
+    position: relative;
+    background-color: #030406;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#webcam {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* Tạo hiệu ứng gương tự nhiên khi tương tác */
+}
+
+#overlay-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* Khớp ma trận tọa độ chính xác với video đã phản chiếu */
+    pointer-events: none;
+    z-index: 10;
+}
+
+.placeholder-overlay {
+    position: absolute;
+    inset: 0;
+    background-color: rgba(10, 11, 14, 0.96);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    z-index: 20;
+    transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    color: #8a8f98;
+    font-size: 13px;
+}
+
+.placeholder-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.spinner {
+    width: 32px;
+    height: 32px;
+    border: 2px solid rgba(0, 240, 255, 0.1);
+    border-top: 2px solid #00f0ff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.visual-status-bar {
+    height: 48px;
+    background-color: #111318;
+    border-top: 1px solid #1f222a;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+}
+
+/* ==========================================================================
+   CONTROL PANEL (40% Width) - Real-time System Notifications
+   ========================================================================== */
+.control-panel {
+    width: 40%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background-color: #111318;
+}
+
+.panel-header {
+    padding: 20px;
+    border-bottom: 1px solid #1f222a;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.panel-header h2 {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: #8a8f98;
+}
+
+.connection-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-dot.connected {
+    background-color: #00ff66;
+    box-shadow: 0 0 8px rgba(0, 255, 102, 0.6);
+}
+
+.status-dot.disconnected {
+    background-color: #ff4a4a;
+    box-shadow: 0 0 8px rgba(255, 74, 74, 0.6);
+}
+
+/* --- LOG STREAM CONTAINER --- */
+.notification-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    scroll-behavior: smooth;
+}
+
+/* Custom Minimalist Scrollbar */
+.notification-log::-webkit-scrollbar {
+    width: 4px;
+}
+.notification-log::-webkit-scrollbar-track {
+    background: transparent;
+}
+.notification-log::-webkit-scrollbar-thumb {
+    background: #232731;
+    border-radius: 2px;
+}
+.notification-log::-webkit-scrollbar-thumb:hover {
+    background: #2e3340;
+}
+
+/* --- LOG ITEMS --- */
+.note-item {
+    padding: 12px 16px;
+    border-radius: 4px;
+    background-color: #17191f;
+    border-left: 3px solid #3a3f50;
+    font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    line-height: 1.5;
+    animation: fadeInSlide 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+@keyframes fadeInSlide {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.note-item .time {
+    color: #4f5462;
+    flex-shrink: 0;
+    user-select: none;
+}
+
+.note-item .message {
+    color: #e4e6eb;
+    word-break: break-word;
+}
+
+.note-item.info { border-left-color: #00f0ff; }
+.note-item.success { border-left-color: #00ff66; }
+.note-item.warning { border-left-color: #ffaa00; }
+.note-item.error { border-left-color: #ff4a4a; }
+
+.note-item.info .message { color: #bdeeff; }
+.note-item.success .message { color: #cdffd8; }
+.note-item.warning .message { color: #ffeecb; }
+.note-item.error .message { color: #ffcbd0; }
+
+/* --- BADGES & CONTROLS --- */
+.badge {
+    font-size: 11px;
+    font-weight: 600;
+    font-family: ui-monospace, monospace;
+    padding: 4px 8px;
+    border-radius: 3px;
+    background-color: #17191f;
+    color: #8a8f98;
+}
+
+.badge-error {
+    background-color: rgba(255, 74, 74, 0.08);
+    color: #ff4a4a;
+    border: 1px solid rgba(255, 74, 74, 0.15);
+}
+
+.badge-success {
+    background-color: rgba(0, 255, 102, 0.08);
+    color: #00ff66;
+    border: 1px solid rgba(0, 255, 102, 0.15);
+}
+
+.panel-footer {
+    padding: 20px;
+    background-color: #0d0f13;
+    border-top: 1px solid #1f222a;
+}
+
+.panel-footer .hint {
+    font-size: 10px;
+    color: #535865;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+}
+
+.btn-group {
+    display: flex;
+    gap: 10px;
+}
+
+.btn {
+    flex: 1;
+    background-color: #17191f;
+    border: 1px solid #282c37;
+    color: #8a8f98;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn:hover {
+    background-color: #1f222a;
+    border-color: #3a3f50;
+    color: #f5f6f9;
+}
+
+.btn:active {
+    transform: scale(0.98);
+}

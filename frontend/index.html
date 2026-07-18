@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vibe Coding - Pose Tracker Interface</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Khu vực bên trái: Camera & Canvas (60%) -->
+        <main class="visual-panel">
+            <div class="video-wrapper">
+                <video id="webcam" autoplay playsinline muted></video>
+                <canvas id="overlay-canvas"></canvas>
+                
+                <!-- Trạng thái chờ camera hoặc báo lỗi quyền truy cập -->
+                <div id="camera-placeholder" class="placeholder-overlay">
+                    <div class="spinner"></div>
+                    <p>Đang yêu cầu quyền truy cập Camera hệ thống...</p>
+                </div>
+            </div>
+            
+            <!-- Thanh trạng thái nhanh dưới luồng video -->
+            <div class="visual-status-bar">
+                <span id="detection-badge" class="badge badge-error">Không nhận diện được người</span>
+                <span id="latency-badge" class="badge">FPS: -- | Latency: --ms</span>
+            </div>
+        </main>
+
+        <!-- Khu vực bên phải: Bảng thông báo hệ thống (40%) -->
+        <aside class="control-panel">
+            <header class="panel-header">
+                <h2>HỆ THỐNG THÔNG BÁO</h2>
+                <div class="connection-status">
+                    <span class="status-dot disconnected" id="status-dot"></span>
+                    <span id="status-text">MẤT KẾT NỐI (WS)</span>
+                </div>
+            </header>
+            
+            <!-- Danh sách thông báo dạng cuộn cuốn chiếu -->
+            <div class="notification-log" id="notification-log">
+                <!-- Thông báo sẽ được tạo động qua JavaScript -->
+            </div>
+
+            <!-- Khu vực điều khiển mô phỏng để kiểm thử UX -->
+            <footer class="panel-footer">
+                <p class="hint">Chế độ kiểm thử giao diện cục bộ:</p>
+                <div class="btn-group">
+                    <button id="btn-mock-connect" class="btn">Mô phỏng WS</button>
+                    <button id="btn-mock-detect" class="btn">Mô phỏng Tư thế</button>
+                </div>
+            </footer>
+        </aside>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
