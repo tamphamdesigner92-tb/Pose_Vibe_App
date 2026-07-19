@@ -1,6 +1,6 @@
 /**
  * Vibe Coding - Pose Tracker Frontend Core Logic
- * Thiết kế để quản lý trạng thái WebCam, Canvas và Hệ thống thông báo.
+ * Quản lý WebCam, kết nối WebSocket thật tới backend, gửi frame và vẽ skeleton thật.
  */
 
 class PoseTrackerUI {
@@ -9,6 +9,25 @@ class PoseTrackerUI {
         this.MAX_NOTIFICATIONS = 10;
         this.isPersonDetected = false;
         this.isWSConnected = false;
+        this.isTracking = true; // Bật gửi frame ngay khi sẵn sàng
+
+        // Cấu hình kết nối & hiệu năng
+        this.WS_URL = `ws://${location.hostname || '127.0.0.1'}:8010/ws`;
+        this.SEND_INTERVAL_MS = 100;   // ~10 FPS gửi lên backend
+        this.CAPTURE_WIDTH = 640;      // Thu nhỏ frame để giảm băng thông
+        this.JPEG_QUALITY = 0.6;
+
+        // Trạng thái runtime
+        this.ws = null;
+        this.sendTimer = null;
+        this.reconnectTimer = null;
+        this.awaitingResponse = false; // Tránh dồn frame khi backend chậm
+        this.currentLandmarks = null;
+
+        // Bộ đếm FPS thực nhận
+        this.frameCount = 0;
+        this.fpsWindowStart = 0;
+        this.currentFps = 0;
 
         // Khởi tạo liên kết DOM Elements
         this.video = document.getElementById('webcam');
@@ -20,8 +39,12 @@ class PoseTrackerUI {
         this.latencyBadge = document.getElementById('latency-badge');
         this.statusDot = document.getElementById('status-dot');
         this.statusText = document.getElementById('status-text');
-        
-        // Nút mô phỏng (Mock Controls)
+
+        // Canvas ẩn dùng để chụp & mã hoá frame gửi backend
+        this.captureCanvas = document.createElement('canvas');
+        this.captureCtx = this.captureCanvas.getContext('2d');
+
+        // Nút điều khiển
         this.btnMockConnect = document.getElementById('btn-mock-connect');
         this.btnMockDetect = document.getElementById('btn-mock-detect');
 
@@ -32,22 +55,22 @@ class PoseTrackerUI {
         this.bindEvents();
         this.setupWebcam();
         this.handleResize();
-        
-        // Kích hoạt thông báo hệ thống chào mừng ban đầu
+
         this.log('Hệ thống Core UI đã được khởi tạo thành công.', 'info');
-        this.log('Đang chờ tín hiệu kết nối từ WebSocket server backend...', 'warning');
+        this.log('Đang chờ camera sẵn sàng để kết nối tới backend...', 'warning');
     }
 
     bindEvents() {
         window.addEventListener('resize', () => this.handleResize());
-        
-        // Lắng nghe sự kiện click mô phỏng để lập trình viên kiểm thử UI lập tức
-        this.btnMockConnect.addEventListener('click', () => this.toggleWSConnection());
-        this.btnMockDetect.addEventListener('click', () => this.simulateDetectionState());
+
+        // Nút 1: Kết nối lại WebSocket thủ công
+        this.btnMockConnect.addEventListener('click', () => this.connectWebSocket());
+        // Nút 2: Bật/tắt chế độ nhận diện (gửi frame)
+        this.btnMockDetect.addEventListener('click', () => this.toggleTracking());
     }
 
     /**
-     * Khởi tạo và xử lý luồng luân chuyển camera phần cứng
+     * Khởi tạo và xử lý luồng camera phần cứng
      */
     async setupWebcam() {
         try {
@@ -59,14 +82,15 @@ class PoseTrackerUI {
                 },
                 audio: false
             });
-            
+
             this.video.srcObject = stream;
             this.video.onloadedmetadata = () => {
-                // Ẩn lớp phủ loading khi camera đã sẵn sàng phát tín hiệu
                 this.placeholder.classList.add('hidden');
                 this.log('Thiết bị Camera Mac đã được cấp quyền và kết nối mượt mà.', 'success');
                 this.handleResize();
-                this.startRenderLoop();
+
+                // Camera đã sẵn sàng -> mở kết nối thật tới backend
+                this.connectWebSocket();
             };
         } catch (error) {
             console.error("Lỗi đồng bộ camera:", error);
@@ -76,18 +100,18 @@ class PoseTrackerUI {
     }
 
     /**
-     * Đồng bộ ma trận độ phân giải Canvas trùng khớp chính xác với khung hình Video thực tế
+     * Đồng bộ độ phân giải Canvas overlay trùng khớp khung hình Video thực tế
      */
     handleResize() {
         const width = this.video.videoWidth || this.video.clientWidth;
         const height = this.video.videoHeight || this.video.clientHeight;
-        
+
         this.canvas.width = width;
         this.canvas.height = height;
     }
 
     /**
-     * Quản lý tập trung luồng thông báo hệ thống (Tối đa 10 dòng, tự động cuộn xuống dưới cùng)
+     * Quản lý luồng thông báo hệ thống (tối đa 10 dòng, tự cuộn xuống dưới cùng)
      */
     log(message, type = 'info') {
         const now = new Date();
@@ -102,102 +126,249 @@ class PoseTrackerUI {
 
         this.logContainer.appendChild(noteItem);
 
-        // Quy tắc nghiệp vụ nghiêm ngặt: Giới hạn lưu trữ tối đa 10 thông báo gần nhất
         while (this.logContainer.children.length > this.MAX_NOTIFICATIONS) {
             this.logContainer.removeChild(this.logContainer.firstChild);
         }
 
-        // Tự động cuộn mượt mà đến phần tử thông báo mới nhất vừa chèn
         this.logContainer.scrollTop = this.logContainer.scrollHeight;
     }
 
     /**
-     * Cập nhật phản hồi trạng thái nhận diện thực tế
+     * Cập nhật badge trạng thái nhận diện (chỉ log khi có thay đổi trạng thái để tránh spam)
      */
     setDetectionState(hasPerson) {
+        if (hasPerson === this.isPersonDetected) return;
         this.isPersonDetected = hasPerson;
+
         if (hasPerson) {
             this.detectionBadge.textContent = "Đang nhận diện tư thế";
             this.detectionBadge.className = "badge badge-success";
+            this.log('MediaPipe: Phát hiện thực thể người trong vùng quét.', 'success');
         } else {
             this.detectionBadge.textContent = "Không nhận diện được người";
             this.detectionBadge.className = "badge badge-error";
+            this.log('MediaPipe: Cảnh báo - Mất dấu thực thể hoặc khung hình trống.', 'warning');
         }
     }
 
     /**
-     * MÔ PHỎNG: Trạng thái kết nối WebSocket
+     * Cập nhật trạng thái kết nối WebSocket trên UI
      */
-    toggleWSConnection() {
-        this.isWSConnected = !this.isWSConnected;
-        if (this.isWSConnected) {
+    setConnectionState(connected) {
+        this.isWSConnected = connected;
+        if (connected) {
             this.statusDot.className = "status-dot connected";
             this.statusText.textContent = "ĐÃ KẾT NỐI (WS)";
-            this.log('Kênh kết nối dữ liệu WebSocket thời gian thực đã MỞ.', 'success');
         } else {
             this.statusDot.className = "status-dot disconnected";
             this.statusText.textContent = "MẤT KẾT NỐI (WS)";
-            this.log('Kênh kết nối WebSocket đã bị ĐÓNG hoặc NGẮT.', 'error');
         }
     }
 
     /**
-     * MÔ PHỎNG: Biến động trạng thái tìm thấy con người trong frame hình
+     * Mở kết nối WebSocket thật tới backend
      */
-    simulateDetectionState() {
-        this.setDetectionState(!this.isPersonDetected);
-        if (this.isPersonDetected) {
-            this.log('MediaPipe: Phát hiện thực thể người trong vùng quét.', 'success');
-            this.latencyBadge.textContent = "FPS: 30 | Latency: 32ms";
-        } else {
-            this.log('MediaPipe: Cảnh báo - Mất dấu thực thể hoặc khung hình trống.', 'warning');
-            this.latencyBadge.textContent = "FPS: -- | Latency: --ms";
+    connectWebSocket() {
+        // Dọn dẹp kết nối cũ nếu có
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
         }
-    }
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+            this.ws.close();
+        }
 
-    /**
-     * Vòng lặp dựng hình liên tục (High-performance Animation Render Loop) dưới 100ms
-     */
-    startRenderLoop() {
-        const loop = () => {
-            // Xóa sạch khung hình cũ để tối ưu bộ nhớ đệm đồ họa Canvas
-            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-            
-            // Nếu phát hiện có người, tiến hành vẽ bộ xương stick figure giả lập đồ họa kỹ thuật thuật toán
-            if (this.isPersonDetected) {
-                this.drawProceduralSkeleton();
-            }
-            
-            requestAnimationFrame(loop);
+        this.log(`Đang mở kết nối tới ${this.WS_URL} ...`, 'info');
+
+        try {
+            this.ws = new WebSocket(this.WS_URL);
+        } catch (e) {
+            this.log(`Không thể tạo WebSocket: ${e.message}`, 'error');
+            this.scheduleReconnect();
+            return;
+        }
+
+        this.ws.onopen = () => {
+            this.setConnectionState(true);
+            this.awaitingResponse = false;
+            this.log('Kênh WebSocket thời gian thực đã MỞ. Bắt đầu truyền frame.', 'success');
+            this.startSendingFrames();
         };
-        requestAnimationFrame(loop);
+
+        this.ws.onmessage = (event) => this.handleBackendMessage(event);
+
+        this.ws.onclose = () => {
+            this.setConnectionState(false);
+            this.stopSendingFrames();
+            this.clearCanvas();
+            this.setDetectionState(false);
+            this.log('Kênh WebSocket đã ĐÓNG. Sẽ thử kết nối lại sau 3s.', 'error');
+            this.scheduleReconnect();
+        };
+
+        this.ws.onerror = () => {
+            // onerror thường đi kèm onclose; chỉ ghi log gọn
+            this.log('Lỗi đường truyền WebSocket (backend có đang chạy ở cổng 8010?).', 'error');
+        };
+    }
+
+    scheduleReconnect() {
+        if (this.reconnectTimer) return;
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.connectWebSocket();
+        }, 3000);
     }
 
     /**
-     * Kỹ thuật vẽ đồ họa vector Skeleton đồng bộ mượt mà mô phỏng thuật toán MediaPipe
+     * Bật/tắt chế độ nhận diện (điều khiển việc gửi frame)
      */
-    drawProceduralSkeleton() {
+    toggleTracking() {
+        this.isTracking = !this.isTracking;
+        if (this.isTracking) {
+            this.btnMockDetect.textContent = "Tắt nhận diện";
+            this.log('Đã BẬT chế độ nhận diện chuyển động.', 'success');
+            if (this.isWSConnected) this.startSendingFrames();
+        } else {
+            this.btnMockDetect.textContent = "Bật nhận diện";
+            this.log('Đã TẮT chế độ nhận diện chuyển động.', 'warning');
+            this.stopSendingFrames();
+            this.clearCanvas();
+            this.setDetectionState(false);
+        }
+    }
+
+    /**
+     * Vòng gửi frame định kỳ lên backend
+     */
+    startSendingFrames() {
+        this.stopSendingFrames();
+        if (!this.isTracking) return;
+        this.fpsWindowStart = performance.now();
+        this.frameCount = 0;
+        this.sendTimer = setInterval(() => this.captureAndSendFrame(), this.SEND_INTERVAL_MS);
+    }
+
+    stopSendingFrames() {
+        if (this.sendTimer) {
+            clearInterval(this.sendTimer);
+            this.sendTimer = null;
+        }
+    }
+
+    /**
+     * Chụp 1 khung hình từ video, mã hoá base64 JPEG và gửi lên backend
+     */
+    captureAndSendFrame() {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        if (this.awaitingResponse) return; // Chờ backend xử lý xong frame trước
+        if (!this.video.videoWidth) return;
+
+        // Scale frame về CAPTURE_WIDTH giữ nguyên tỉ lệ
+        const vw = this.video.videoWidth;
+        const vh = this.video.videoHeight;
+        const scale = this.CAPTURE_WIDTH / vw;
+        const cw = this.CAPTURE_WIDTH;
+        const ch = Math.round(vh * scale);
+
+        if (this.captureCanvas.width !== cw || this.captureCanvas.height !== ch) {
+            this.captureCanvas.width = cw;
+            this.captureCanvas.height = ch;
+        }
+
+        // Vẽ frame gốc (KHÔNG lật) để MediaPipe nhận diện đúng chiều thật
+        this.captureCtx.drawImage(this.video, 0, 0, cw, ch);
+        const dataUrl = this.captureCanvas.toDataURL('image/jpeg', this.JPEG_QUALITY);
+
+        try {
+            this.ws.send(JSON.stringify({ image: dataUrl, timestamp: Date.now() }));
+            this.awaitingResponse = true;
+        } catch (e) {
+            console.error('Gửi frame thất bại:', e);
+        }
+    }
+
+    /**
+     * Xử lý phản hồi từ backend: cập nhật badge, latency, FPS và vẽ skeleton thật
+     */
+    handleBackendMessage(event) {
+        this.awaitingResponse = false;
+
+        let data;
+        try {
+            data = JSON.parse(event.data);
+        } catch (e) {
+            return;
+        }
+
+        // Tính latency khứ hồi
+        const latency = data.timestamp ? (Date.now() - data.timestamp) : 0;
+
+        // Tính FPS thực trong cửa sổ 1 giây
+        this.frameCount++;
+        const elapsed = performance.now() - this.fpsWindowStart;
+        if (elapsed >= 1000) {
+            this.currentFps = Math.round((this.frameCount * 1000) / elapsed);
+            this.frameCount = 0;
+            this.fpsWindowStart = performance.now();
+        }
+
+        if (data.success && data.landmarks && Object.keys(data.landmarks).length > 0) {
+            this.setDetectionState(true);
+            this.currentLandmarks = data.landmarks;
+            this.drawSkeleton(data.landmarks);
+            this.latencyBadge.textContent = `FPS: ${this.currentFps || '--'} | Latency: ${latency}ms`;
+        } else {
+            this.setDetectionState(false);
+            this.currentLandmarks = null;
+            this.clearCanvas();
+            this.latencyBadge.textContent = `FPS: ${this.currentFps || '--'} | Latency: ${latency}ms`;
+        }
+    }
+
+    clearCanvas() {
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    }
+
+    /**
+     * Vẽ skeleton thật từ landmarks MediaPipe (toạ độ chuẩn hoá 0..1).
+     * Backend trả về: head, left_shoulder, right_shoulder, left_elbow, right_elbow, left_wrist, right_wrist.
+     * Canvas overlay đã được CSS lật gương scaleX(-1) trùng với video nên vẽ theo toạ độ gốc là khớp.
+     */
+    drawSkeleton(lm) {
         const w = this.canvas.width;
         const h = this.canvas.height;
-        const ticks = Date.now() * 0.003; // Điều phối nhịp sinh học chuyển động mượt mà
-        
-        // Tính toán các điểm nút tọa độ giả lập chuyển động tự nhiên sinh học
-        const head = { x: w * 0.5, y: h * 0.28 + Math.sin(ticks) * 8 };
-        const neck = { x: w * 0.5, y: h * 0.38 + Math.sin(ticks) * 6 };
-        const shoulderL = { x: w * 0.38, y: h * 0.40 };
-        const shoulderR = { x: w * 0.62, y: h * 0.40 };
-        const elbowL = { x: w * 0.32, y: h * 0.54 + Math.cos(ticks) * 12 };
-        const elbowR = { x: w * 0.68, y: h * 0.52 + Math.sin(ticks) * 12 };
-        const wristL = { x: w * 0.30, y: h * 0.66 + Math.cos(ticks) * 20 };
-        const wristR = { x: w * 0.70, y: h * 0.34 + Math.sin(ticks * 1.6) * 25 }; // Tay phải giơ cao cử động
-        
-        const joints = [head, neck, shoulderL, shoulderR, elbowL, elbowR, wristL, wristR];
+        this.ctx.clearRect(0, 0, w, h);
+
+        const MIN_VIS = 0.3;
+        const P = (key) => {
+            const p = lm[key];
+            if (!p || p.visibility < MIN_VIS) return null;
+            return { x: p.x * w, y: p.y * h };
+        };
+
+        const head = P('head');
+        const shL = P('left_shoulder');
+        const shR = P('right_shoulder');
+        const elL = P('left_elbow');
+        const elR = P('right_elbow');
+        const wrL = P('left_wrist');
+        const wrR = P('right_wrist');
+
+        // Điểm cổ = trung điểm hai vai (nếu có đủ)
+        let neck = null;
+        if (shL && shR) {
+            neck = { x: (shL.x + shR.x) / 2, y: (shL.y + shR.y) / 2 };
+        }
+
         const bones = [
-            [head, neck], [shoulderL, shoulderR], [neck, shoulderL], [neck, shoulderR],
-            [shoulderL, elbowL], [elbowL, wristL], [shoulderR, elbowR], [elbowR, wristR]
+            [shL, shR],
+            [neck, head],
+            [shL, elL], [elL, wrL],
+            [shR, elR], [elR, wrR],
         ];
 
-        // Khởi tạo các cấu trúc thuộc tính vẽ đường nối (Xương) với hiệu ứng Neon Glowing kỹ thuật số
+        // Vẽ xương với hiệu ứng neon
         this.ctx.strokeStyle = '#00f0ff';
         this.ctx.lineWidth = 4;
         this.ctx.lineCap = 'round';
@@ -206,29 +377,30 @@ class PoseTrackerUI {
         this.ctx.shadowColor = '#00f0ff';
 
         bones.forEach(([from, to]) => {
+            if (!from || !to) return;
             this.ctx.beginPath();
             this.ctx.moveTo(from.x, from.y);
             this.ctx.lineTo(to.x, to.y);
             this.ctx.stroke();
         });
 
-        // Tái cấu trúc thuộc tính vẽ các điểm khớp nối (Khớp xương tròn)
+        // Vẽ các khớp
         this.ctx.fillStyle = '#00ff66';
         this.ctx.shadowBlur = 10;
         this.ctx.shadowColor = '#00ff66';
 
-        joints.forEach(joint => {
+        [head, neck, shL, shR, elL, elR, wrL, wrR].forEach(joint => {
+            if (!joint) return;
             this.ctx.beginPath();
             this.ctx.arc(joint.x, joint.y, 5, 0, Math.PI * 2);
             this.ctx.fill();
         });
 
-        // Khôi phục bộ cấu hình mặc định tránh tràn hiệu ứng bóng mờ (Shadow Bleeding)
         this.ctx.shadowBlur = 0;
     }
 }
 
-// Khởi chạy Module ứng dụng khi tài nguyên DOM đã sẵn sàng vững chắc
+// Khởi chạy khi DOM sẵn sàng
 document.addEventListener('DOMContentLoaded', () => {
     window.trackerApp = new PoseTrackerUI();
 });
