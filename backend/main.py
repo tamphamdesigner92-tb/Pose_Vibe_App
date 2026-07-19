@@ -1,4 +1,5 @@
 import uvicorn
+import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pose_tracker import PoseTracker
@@ -35,20 +36,28 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({
                     "success": False,
                     "persons": [],
+                    "faces": [],
+                    "hands": [],
                     "message": "Dữ liệu hình ảnh trống.",
                     "timestamp": client_timestamp
                 })
                 continue
 
-            # Thực thi xử lý AI trên khung hình (hỗ trợ đa người)
+            # Thực thi xử lý AI (Pose + Face + Hand chạy song song bên trong tracker) trên
+            # threadpool để không chặn vòng lặp sự kiện asyncio trong lúc suy luận.
             start_process_time = time.time()
-            is_detected, persons, message = tracker.process_frame(base64_frame)
+            loop = asyncio.get_running_loop()
+            is_detected, payload, message = await loop.run_in_executor(
+                None, tracker.process_frame, base64_frame
+            )
             process_duration_ms = (time.time() - start_process_time) * 1000
 
             # Đóng gói và gửi phản hồi ngay lập tức
             await websocket.send_json({
                 "success": is_detected,
-                "persons": persons,
+                "persons": payload["persons"],
+                "faces": payload["faces"],
+                "hands": payload["hands"],
                 "message": f"{message} (Backend xử lý: {process_duration_ms:.1f}ms)",
                 "timestamp": client_timestamp  # Trả lại nhãn thời gian gốc cho Client
             })
