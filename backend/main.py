@@ -34,20 +34,21 @@ async def websocket_endpoint(websocket: WebSocket):
             if not base64_frame:
                 await websocket.send_json({
                     "success": False,
+                    "persons": [],
                     "message": "Dữ liệu hình ảnh trống.",
                     "timestamp": client_timestamp
                 })
                 continue
 
-            # Thực thi xử lý AI trên khung hình
+            # Thực thi xử lý AI trên khung hình (hỗ trợ đa người)
             start_process_time = time.time()
-            is_detected, landmarks, message = tracker.process_frame(base64_frame)
+            is_detected, persons, message = tracker.process_frame(base64_frame)
             process_duration_ms = (time.time() - start_process_time) * 1000
 
             # Đóng gói và gửi phản hồi ngay lập tức
             await websocket.send_json({
                 "success": is_detected,
-                "landmarks": landmarks,
+                "persons": persons,
                 "message": f"{message} (Backend xử lý: {process_duration_ms:.1f}ms)",
                 "timestamp": client_timestamp  # Trả lại nhãn thời gian gốc cho Client
             })

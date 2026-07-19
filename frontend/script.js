@@ -8,6 +8,7 @@ class PoseTrackerUI {
         // Cấu hình ràng buộc nghiệp vụ (Business Rules)
         this.MAX_NOTIFICATIONS = 10;
         this.isPersonDetected = false;
+        this.lastPersonCount = 0;
         this.isWSConnected = false;
         this.isTracking = true; // Bật gửi frame ngay khi sẵn sàng
 
@@ -22,7 +23,15 @@ class PoseTrackerUI {
         this.sendTimer = null;
         this.reconnectTimer = null;
         this.awaitingResponse = false; // Tránh dồn frame khi backend chậm
-        this.currentLandmarks = null;
+        this.currentPersons = [];
+
+        // Bảng màu neon phân biệt từng người khi có nhiều người trong khung hình
+        this.PERSON_PALETTE = [
+            { bone: '#00f0ff', joint: '#00ff66' }, // cyan / lime
+            { bone: '#ff00e6', joint: '#ffd400' }, // magenta / vàng
+            { bone: '#ff8a00', joint: '#ffffff' }, // cam / trắng
+            { bone: '#7cff00', joint: '#00f0ff' }, // lime / cyan
+        ];
 
         // Bộ đếm FPS thực nhận
         this.frameCount = 0;
@@ -134,21 +143,29 @@ class PoseTrackerUI {
     }
 
     /**
-     * Cập nhật badge trạng thái nhận diện (chỉ log khi có thay đổi trạng thái để tránh spam)
+     * Cập nhật badge trạng thái nhận diện (chỉ log khi có thay đổi trạng thái/số người để tránh spam)
      */
-    setDetectionState(hasPerson) {
-        if (hasPerson === this.isPersonDetected) return;
+    setDetectionState(personCount) {
+        const hasPerson = personCount > 0;
+        const countChanged = personCount !== this.lastPersonCount;
         this.isPersonDetected = hasPerson;
 
         if (hasPerson) {
-            this.detectionBadge.textContent = "Đang nhận diện tư thế";
+            this.detectionBadge.textContent = personCount === 1
+                ? "Đang nhận diện tư thế"
+                : `Đang nhận diện ${personCount} người`;
             this.detectionBadge.className = "badge badge-success";
-            this.log('MediaPipe: Phát hiện thực thể người trong vùng quét.', 'success');
+            if (countChanged) {
+                this.log(`MediaPipe: Phát hiện ${personCount} thực thể người trong vùng quét.`, 'success');
+            }
         } else {
             this.detectionBadge.textContent = "Không nhận diện được người";
             this.detectionBadge.className = "badge badge-error";
-            this.log('MediaPipe: Cảnh báo - Mất dấu thực thể hoặc khung hình trống.', 'warning');
+            if (countChanged) {
+                this.log('MediaPipe: Cảnh báo - Mất dấu thực thể hoặc khung hình trống.', 'warning');
+            }
         }
+        this.lastPersonCount = personCount;
     }
 
     /**
@@ -313,17 +330,18 @@ class PoseTrackerUI {
             this.fpsWindowStart = performance.now();
         }
 
-        if (data.success && data.landmarks && Object.keys(data.landmarks).length > 0) {
-            this.setDetectionState(true);
-            this.currentLandmarks = data.landmarks;
-            this.drawSkeleton(data.landmarks);
-            this.latencyBadge.textContent = `FPS: ${this.currentFps || '--'} | Latency: ${latency}ms`;
+        const persons = Array.isArray(data.persons) ? data.persons : [];
+
+        if (data.success && persons.length > 0) {
+            this.setDetectionState(persons.length);
+            this.currentPersons = persons;
+            this.drawSkeleton(persons);
         } else {
-            this.setDetectionState(false);
-            this.currentLandmarks = null;
+            this.setDetectionState(0);
+            this.currentPersons = [];
             this.clearCanvas();
-            this.latencyBadge.textContent = `FPS: ${this.currentFps || '--'} | Latency: ${latency}ms`;
         }
+        this.latencyBadge.textContent = `FPS: ${this.currentFps || '--'} | Latency: ${latency}ms`;
     }
 
     clearCanvas() {
@@ -331,14 +349,27 @@ class PoseTrackerUI {
     }
 
     /**
-     * Vẽ skeleton thật từ landmarks MediaPipe (toạ độ chuẩn hoá 0..1).
-     * Backend trả về: head, left_shoulder, right_shoulder, left_elbow, right_elbow, left_wrist, right_wrist.
+     * Vẽ skeleton thật cho TẤT CẢ người phát hiện được (toạ độ chuẩn hoá 0..1 từ MediaPipe).
      * Canvas overlay đã được CSS lật gương scaleX(-1) trùng với video nên vẽ theo toạ độ gốc là khớp.
      */
-    drawSkeleton(lm) {
+    drawSkeleton(persons) {
         const w = this.canvas.width;
         const h = this.canvas.height;
         this.ctx.clearRect(0, 0, w, h);
+
+        persons.forEach((lm, index) => {
+            const palette = this.PERSON_PALETTE[index % this.PERSON_PALETTE.length];
+            this.drawSinglePersonSkeleton(lm, palette);
+        });
+    }
+
+    /**
+     * Vẽ full body (đầu, thân, tay, hông, chân, bàn chân) cho 1 người với màu riêng biệt.
+     * Backend trả về các khớp: head, {left,right}_{shoulder,elbow,wrist,hip,knee,ankle,foot_index}.
+     */
+    drawSinglePersonSkeleton(lm, palette) {
+        const w = this.canvas.width;
+        const h = this.canvas.height;
 
         const MIN_VIS = 0.3;
         const P = (key) => {
@@ -354,27 +385,44 @@ class PoseTrackerUI {
         const elR = P('right_elbow');
         const wrL = P('left_wrist');
         const wrR = P('right_wrist');
+        const hipL = P('left_hip');
+        const hipR = P('right_hip');
+        const kneeL = P('left_knee');
+        const kneeR = P('right_knee');
+        const ankleL = P('left_ankle');
+        const ankleR = P('right_ankle');
+        const footL = P('left_foot_index');
+        const footR = P('right_foot_index');
 
-        // Điểm cổ = trung điểm hai vai (nếu có đủ)
-        let neck = null;
-        if (shL && shR) {
-            neck = { x: (shL.x + shR.x) / 2, y: (shL.y + shR.y) / 2 };
-        }
+        // Điểm cổ = trung điểm hai vai; điểm giữa hông = trung điểm hai hông (dùng làm cột sống)
+        const neck = (shL && shR) ? { x: (shL.x + shR.x) / 2, y: (shL.y + shR.y) / 2 } : null;
+        const midHip = (hipL && hipR) ? { x: (hipL.x + hipR.x) / 2, y: (hipL.y + hipR.y) / 2 } : null;
 
         const bones = [
-            [shL, shR],
+            // Đầu & vai
             [neck, head],
+            [shL, shR],
+            // Hai tay
             [shL, elL], [elL, wrL],
             [shR, elR], [elR, wrR],
+            // Cột sống & khung hông
+            [neck, midHip],
+            [hipL, hipR],
+            [shL, hipL], [shR, hipR],
+            // Hai chân
+            [hipL, kneeL], [kneeL, ankleL],
+            [hipR, kneeR], [kneeR, ankleR],
+            // Bàn chân
+            [ankleL, footL], [ankleR, footR],
         ];
 
         // Vẽ xương với hiệu ứng neon
-        this.ctx.strokeStyle = '#00f0ff';
+        this.ctx.strokeStyle = palette.bone;
         this.ctx.lineWidth = 4;
         this.ctx.lineCap = 'round';
         this.ctx.lineJoin = 'round';
         this.ctx.shadowBlur = 8;
-        this.ctx.shadowColor = '#00f0ff';
+        this.ctx.shadowColor = palette.bone;
 
         bones.forEach(([from, to]) => {
             if (!from || !to) return;
@@ -385,16 +433,17 @@ class PoseTrackerUI {
         });
 
         // Vẽ các khớp
-        this.ctx.fillStyle = '#00ff66';
+        this.ctx.fillStyle = palette.joint;
         this.ctx.shadowBlur = 10;
-        this.ctx.shadowColor = '#00ff66';
+        this.ctx.shadowColor = palette.joint;
 
-        [head, neck, shL, shR, elL, elR, wrL, wrR].forEach(joint => {
-            if (!joint) return;
-            this.ctx.beginPath();
-            this.ctx.arc(joint.x, joint.y, 5, 0, Math.PI * 2);
-            this.ctx.fill();
-        });
+        [head, neck, shL, shR, elL, elR, wrL, wrR, midHip, hipL, hipR, kneeL, kneeR, ankleL, ankleR, footL, footR]
+            .forEach(joint => {
+                if (!joint) return;
+                this.ctx.beginPath();
+                this.ctx.arc(joint.x, joint.y, 5, 0, Math.PI * 2);
+                this.ctx.fill();
+            });
 
         this.ctx.shadowBlur = 0;
     }

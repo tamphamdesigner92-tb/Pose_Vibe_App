@@ -24,3 +24,5 @@ backend/venv/
 
 # --- MediaPipe model cache (tự tải lại khi cần) ---
 *.tflite
+*.task
+backend/models/
