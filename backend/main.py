@@ -68,5 +68,5 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"⚠️ Phát hiện sự cố trên đường truyền WebSocket: {e}")
 
 if __name__ == "__main__":
-    # Chạy uvicorn server tại local port 8010 (tránh trùng cổng 8000 của CrabbyCut)
-    uvicorn.run("main:app", host="127.0.0.1", port=8010, reload=True)
+    # Chạy uvicorn server tại local port 8888 (tránh trùng cổng của CrabbyCut)
+    uvicorn.run("main:app", host="127.0.0.1", port=8888, reload=True)

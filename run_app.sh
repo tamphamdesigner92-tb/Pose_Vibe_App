@@ -55,11 +55,11 @@ if [ $? -ne 0 ]; then
 fi
 echo "✅ Hệ thống thư viện đã đầy đủ và sẵn sàng!"
 
-# 4. Tạo luồng chạy ngầm để chờ Port 8000 mở và tự động kích hoạt trình duyệt
+# 4. Tạo luồng chạy ngầm để chờ Port 8888 mở và tự động kích hoạt trình duyệt
 (
-    echo "⏳ Đang lắng nghe tín hiệu từ WebSocket Server tại port 8010..."
+    echo "⏳ Đang lắng nghe tín hiệu từ WebSocket Server tại port 8888..."
     # Dùng nc (netcat) tích hợp sẵn trên macOS để quét trạng thái cổng kết nối
-    while ! nc -z 127.0.0.1 8010; do
+    while ! nc -z 127.0.0.1 8888; do
         sleep 0.5
     done
     echo "🖥️  [BACKEND READY] Server đã phản hồi ổn định!"
@@ -68,6 +68,6 @@ echo "✅ Hệ thống thư viện đã đầy đủ và sẵn sàng!"
 ) &
 
 # 5. Khởi động FastAPI server ở chế độ tiền cảnh (Foreground) để lập trình viên theo dõi log
-echo "⚡ Đang chạy Uvicorn Server tại địa chỉ ws://127.0.0.1:8010/ws..."
+echo "⚡ Đang chạy Uvicorn Server tại địa chỉ ws://127.0.0.1:8888/ws..."
 cd backend || exit
 python3 main.py

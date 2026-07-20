@@ -19,7 +19,7 @@ class PoseTrackerUI {
         this.isTracking = true; // Bật gửi frame ngay khi sẵn sàng
 
         // Cấu hình kết nối & hiệu năng
-        this.WS_URL = `ws://${location.hostname || '127.0.0.1'}:8010/ws`;
+        this.WS_URL = `ws://${location.hostname || '127.0.0.1'}:8888/ws`;
         this.SEND_INTERVAL_MS = 100;   // ~10 FPS gửi lên backend
         this.CAPTURE_WIDTH = 640;      // Thu nhỏ frame để giảm băng thông
         this.JPEG_QUALITY = 0.6;
@@ -252,7 +252,7 @@ class PoseTrackerUI {
 
         this.ws.onerror = () => {
             // onerror thường đi kèm onclose; chỉ ghi log gọn
-            this.log('Lỗi đường truyền WebSocket (backend có đang chạy ở cổng 8010?).', 'error');
+            this.log('Lỗi đường truyền WebSocket (backend có đang chạy ở cổng 8888?).', 'error');
         };
     }
 
