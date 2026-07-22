@@ -3,6 +3,7 @@ import numpy as np
 import mediapipe as mp
 import base64
 import os
+import platform
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -61,35 +62,66 @@ def _ensure_model_downloaded(url: str, path: str):
         )
 
 
+def _gpu_delegate_supported() -> bool:
+    """
+    MediaPipe Tasks Python: GPU delegate có trên macOS (Metal) và Linux.
+    Trên Windows, PyPI wheel hiện chỉ hỗ trợ CPU delegate.
+    """
+    return platform.system() in ("Darwin", "Linux")
+
+
+def _gpu_delegate_label() -> str:
+    if platform.system() == "Darwin":
+        return "GPU delegate (Metal)"
+    return "GPU delegate"
+
+
+def _configure_platform_optimizations():
+    """Bật tối ưu CPU đa lõi cho Windows (OpenCV decode/cvtColor)."""
+    if platform.system() == "Windows":
+        threads = min(8, os.cpu_count() or 4)
+        cv2.setNumThreads(threads)
+        print(f"ℹ️ [Windows] OpenCV dùng {threads} luồng CPU cho tiền xử lý ảnh.")
+
+
 def _create_landmarker(label: str, model_cls, options_cls, model_path: str, **extra_kwargs):
     """
-    Khởi tạo landmarker với GPU delegate (Metal) để tối ưu tốc độ; nếu máy không hỗ trợ
-    (ví dụ Mac Intel không có Metal phù hợp) thì tự động rơi về CPU delegate an toàn.
+    Khởi tạo landmarker với GPU delegate khi nền tảng hỗ trợ (macOS Metal, Linux);
+    nếu không hỗ trợ hoặc khởi tạo GPU thất bại thì rơi về CPU delegate an toàn.
     Lưu ý: bước rơi về CPU chỉ xử lý lỗi ở thời điểm KHỞI TẠO. Rủi ro crash khi ĐANG suy luận
     do sai định dạng ảnh (SRGB thay vì SRGBA) được loại trừ triệt để bằng cách toàn bộ
     pipeline luôn dùng ảnh RGBA (xem process_frame), áp dụng cho cả CPU lẫn GPU delegate.
     """
-    try:
-        options = options_cls(
-            base_options=BaseOptions(model_asset_path=model_path, delegate=BaseOptions.Delegate.GPU),
-            running_mode=VisionTaskRunningMode.VIDEO,
-            **extra_kwargs,
+    if _gpu_delegate_supported():
+        try:
+            options = options_cls(
+                base_options=BaseOptions(model_asset_path=model_path, delegate=BaseOptions.Delegate.GPU),
+                running_mode=VisionTaskRunningMode.VIDEO,
+                **extra_kwargs,
+            )
+            landmarker = model_cls.create_from_options(options)
+            print(f"✅ [{label}] Khởi tạo thành công với {_gpu_delegate_label()}.")
+            return landmarker
+        except Exception as e:
+            print(f"⚠️ [{label}] Không thể dùng GPU delegate ({e}). Chuyển sang CPU delegate.")
+    elif platform.system() == "Windows":
+        print(
+            f"ℹ️ [{label}] Windows: MediaPipe Python chưa hỗ trợ GPU delegate "
+            f"(chỉ CPU). Dùng CPU delegate với tối ưu đa luồng OpenCV."
         )
-        landmarker = model_cls.create_from_options(options)
-        print(f"✅ [{label}] Khởi tạo thành công với GPU delegate (Metal).")
-        return landmarker
-    except Exception as e:
-        print(f"⚠️ [{label}] Không thể dùng GPU delegate ({e}). Chuyển sang CPU delegate.")
-        options = options_cls(
-            base_options=BaseOptions(model_asset_path=model_path, delegate=BaseOptions.Delegate.CPU),
-            running_mode=VisionTaskRunningMode.VIDEO,
-            **extra_kwargs,
-        )
-        return model_cls.create_from_options(options)
+
+    options = options_cls(
+        base_options=BaseOptions(model_asset_path=model_path, delegate=BaseOptions.Delegate.CPU),
+        running_mode=VisionTaskRunningMode.VIDEO,
+        **extra_kwargs,
+    )
+    return model_cls.create_from_options(options)
 
 
 class PoseTracker:
     def __init__(self):
+        _configure_platform_optimizations()
+
         _ensure_model_downloaded(POSE_MODEL_URL, POSE_MODEL_PATH)
         _ensure_model_downloaded(FACE_MODEL_URL, FACE_MODEL_PATH)
         _ensure_model_downloaded(HAND_MODEL_URL, HAND_MODEL_PATH)
@@ -197,7 +229,7 @@ class PoseTracker:
                 return False, {"persons": [], "faces": [], "hands": []}, "Lỗi: Không thể giải mã dữ liệu hình ảnh thô."
 
             # Chuyển đổi BGR (OpenCV) sang RGBA - dùng chung 1 ảnh cho cả 3 model.
-            # BẮT BUỘC dùng RGBA (4 kênh) khi chạy GPU delegate (Metal): đưa ảnh RGB (3 kênh)
+            # BẮT BUỘC dùng RGBA (4 kênh) khi chạy GPU delegate: đưa ảnh RGB (3 kênh)
             # vào GPU delegate gây crash cứng ở tầng C++ (không bắt được bằng try/except).
             # RGBA cũng hoạt động bình thường với CPU delegate nên dùng thống nhất cho cả 2.
             image_rgba = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)

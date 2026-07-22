@@ -19,7 +19,7 @@ class PoseTrackerUI {
         this.isTracking = true; // Bật gửi frame ngay khi sẵn sàng
 
         // Cấu hình kết nối & hiệu năng
-        this.WS_URL = `ws://${location.hostname || '127.0.0.1'}:8888/ws`;
+        this.WS_URL = `ws://${window.location.hostname}:8888/ws`; // Tự động khớp host theo URL trang
         this.SEND_INTERVAL_MS = 100;   // ~10 FPS gửi lên backend
         this.CAPTURE_WIDTH = 640;      // Thu nhỏ frame để giảm băng thông
         this.JPEG_QUALITY = 0.6;

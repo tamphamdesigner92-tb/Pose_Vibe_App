@@ -1,7 +1,11 @@
+import os
 import uvicorn
 import asyncio
+from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pose_tracker import PoseTracker
 import time
 
@@ -16,8 +20,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Phục vụ frontend (HTML/CSS/JS) trực tiếp từ FastAPI — chỉ cần 1 server duy nhất
+_FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+if _FRONTEND_DIR.is_dir():
+    # Mount các file tĩnh (CSS, JS) dưới /static
+    app.mount("/static", StaticFiles(directory=str(_FRONTEND_DIR)), name="static")
+
 # Khởi tạo dịch vụ phân tích tư thế
 tracker = PoseTracker()
+
+@app.get("/")
+async def serve_index():
+    """Phục vụ trang chính frontend tại http://127.0.0.1:8888/"""
+    index_path = _FRONTEND_DIR / "index.html"
+    if index_path.is_file():
+        return FileResponse(str(index_path), media_type="text/html")
+    return {"detail": "Frontend directory not found"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
